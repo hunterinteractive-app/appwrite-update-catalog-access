@@ -1,47 +1,66 @@
 const sdk = require("node-appwrite");
 
-module.exports = async (req, res) => {
-  const client = new sdk.Client()
-    .setEndpoint("https://cloud.appwrite.io/v1")
-    .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID)
-    .setKey(process.env.APPWRITE_API_KEY);
+/*
+POST BODY FORMAT EXPECTED:
+{
+   "email": "buyer@example.com",
+   "year": 2024
+}
+*/
 
-  const databases = new sdk.Databases(client);
+module.exports = async function (req, res) {
+  const client = new sdk.Client()
+    .setEndpoint(process.env.APPWRITE_ENDPOINT)
+    .setProject(process.env.APPWRITE_PROJECT_ID)
+    .setKey(process.env.APPWRITE_API_KEY);   // API Key with Database Write permission
+
+  const db = new sdk.Databases(client);
 
   try {
-    if (!req.body) throw new Error("Missing request body");
-    const data = JSON.parse(req.body);
-    const email = data.email?.toLowerCase().trim();
-    const catalogYear = data.catalogYear || new Date().getFullYear();
+    // 1️⃣ Parse incoming webhook POST body
+    const body = JSON.parse(req.body || "{}");
 
-    if (!email) throw new Error("Missing email");
+    if (!body.email) {
+      return res.json({ error: "Missing email in request body"});
+    }
 
-    console.log(`Granting catalog access for ${email}`);
+    const email = body.email.toLowerCase();
+    const catalogYear = body.year || 2024;
 
-    const result = await databases.listDocuments(
-      process.env.APPWRITE_DATABASE_ID,
-      process.env.APPWRITE_COLLECTION_ID,
-      [sdk.Query.equal("email", email)]
+    // 2️⃣ Find the user document by email
+    const users = await db.listDocuments(
+      process.env.USER_DB_ID,
+      process.env.USER_COLLECTION_ID,
+      [ sdk.Query.equal("email", email) ]
     );
 
-    if (result.total === 0) throw new Error(`User not found: ${email}`);
+    if (users.total === 0) {
+      return res.json({ error: "User not found in database" });
+    }
 
-    const userDoc = result.documents[0];
+    const userDoc = users.documents[0];
 
-    await databases.updateDocument(
-      process.env.APPWRITE_DATABASE_ID,
-      process.env.APPWRITE_COLLECTION_ID,
+    // 3️⃣ Update their access
+    await db.updateDocument(
+      process.env.USER_DB_ID,
+      process.env.USER_COLLECTION_ID,
       userDoc.$id,
       {
         canViewCatalog: true,
-        catalogYear,
-        accessGrantedAt: new Date().toISOString(),
+        catalogYear: catalogYear,
+        accessGrantedAt: new Date().toISOString()
       }
     );
 
-    res.json({ success: true, message: `Access granted for ${email}` });
+    return res.json({
+      success: true,
+      message: "Catalog access granted",
+      email: email
+    });
+
   } catch (err) {
-    console.error(err);
-    res.json({ success: false, error: err.message });
+    return res.json({
+      error: err.message || "Function error"
+    });
   }
 };
