@@ -1,8 +1,16 @@
 {
-  "name": "update-catalog-access",
+  "name": "starter-template",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "",
+  "main": "src/main.js",
+  "type": "module",
+  "scripts": {
+    "format": "prettier --write ."
+  },
   "dependencies": {
-    "node-appwrite": "^13.0.0"
+    "node-appwrite": "^14.1.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.2.5"
   }
 }
