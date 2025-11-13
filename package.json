@@ -1,8 +1,9 @@
 {
-  "name": "grant-catalog-access",
+  "name": "marcs-catalog-access-sync",
   "version": "1.0.0",
   "main": "index.js",
+  "type": "module",
   "dependencies": {
-    "node-appwrite": "^12.0.0"
+    "node-appwrite": "^14.0.0"
   }
 }
