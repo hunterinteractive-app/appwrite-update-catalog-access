@@ -1,97 +1,98 @@
-import sdk from "node-appwrite";
+import { Client, Databases, Query } from "node-appwrite";
 
-export default async ({ req, res, log, error, env }) => {
-  // Allow Square to POST without CORS issues
-  res.setHeader("Content-Type", "application/json");
+export default async function (context) {
+  context.log("📥 Function Triggered");
 
-  log("📥 Function Triggered");
+  let rawBody = context.req.bodyRaw;
 
-  // Pull raw JSON body
-  const raw = req.bodyRaw;
-  log("📦 Raw Payload:", raw);
-
-  if (!raw) {
-    error("❌ No body received");
-    return res.send("No body", 400);
+  if (!rawBody || rawBody.length === 0) {
+    context.log("⚠️ No bodyRaw provided");
+    context.res = { status: 400, body: "Missing raw body" };
+    return;
   }
 
-  let payload;
+  let event;
   try {
-    payload = JSON.parse(raw);
-  } catch (err) {
-    error("❌ Failed to parse JSON:", err);
-    return res.send("Invalid JSON", 400);
+    event = JSON.parse(rawBody);
+  } catch (e) {
+    context.error("❌ Failed to parse JSON:", e);
+    context.res = { status: 400, body: "Invalid JSON" };
+    return;
   }
 
-  const eventType = payload.type || payload.event_type || "";
-  log("🔎 Detected eventType:", eventType);
+  context.log("📦 Raw Payload:", JSON.stringify(event));
 
-  if (!eventType.includes("payment")) {
-    log("⚠️ Ignored non-payment event");
-    return res.send("Ignored", 200);
+  const eventType = event?.type;
+  context.log("🔎 Detected eventType:", eventType);
+
+  if (eventType !== "payment.created") {
+    context.log("⚠️ Ignored non payment event");
+    context.res = { status: 200, body: "Ignored" };
+    return;
   }
 
-  // Extract buyer email
-  const email =
-    payload?.data?.object?.payment?.buyer_email_address ||
-    payload?.data?.object?.order?.fulfillments?.[0]?.recipient?.email_address ||
-    null;
+  const buyerEmail = event?.data?.object?.payment?.buyer_email_address;
+  context.log("📧 Buyer Email:", buyerEmail);
 
-  if (!email) {
-    error("❌ No buyer email found in webhook");
-    return res.send("No buyer email", 400);
+  if (!buyerEmail) {
+    context.log("❌ Missing buyer_email_address in event");
+    context.res = { status: 400, body: "Missing email" };
+    return;
   }
-
-  log("📧 Buyer Email:", email);
 
   // Initialize Appwrite client
-  const client = new sdk.Client()
-    .setEndpoint(env.APPWRITE_ENDPOINT)
-    .setProject(env.APPWRITE_PROJECT_ID)
-    .setKey(env.APPWRITE_API_KEY);
+  const client = new Client()
+    .setEndpoint(context.env.APPWRITE_ENDPOINT)
+    .setProject(context.env.APPWRITE_PROJECT_ID)
+    .setKey(context.env.APPWRITE_API_KEY);
 
-  const databases = new sdk.Databases(client);
+  const databases = new Databases(client);
 
-  // Query matching user
-  let userDocs;
+  const databaseId = context.env.USER_DATABASE_ID;
+  const collectionId = context.env.USER_COLLECTION_ID;
+
+  context.log("🔧 DB:", { databaseId, collectionId });
+
+  // Lookup user row by email
+  let userRows;
   try {
-    userDocs = await databases.listDocuments(
-      env.USER_DATABASE_ID,
-      env.USER_COLLECTION_ID,
-      [sdk.Query.equal("email", email)]
-    );
+    userRows = await databases.listDocuments(databaseId, collectionId, [
+      Query.equal("email", buyerEmail),
+    ]);
   } catch (err) {
-    error("❌ DB Query Failed:", err);
-    return res.send("DB query failed", 500);
+    context.error("❌ DB Query Failed:", err);
+    context.res = { status: 500, body: "DB query failed" };
+    return;
   }
 
-  log("📊 Query result:", JSON.stringify(userDocs, null, 2));
+  context.log("📊 Query result:", JSON.stringify(userRows));
 
-  if (userDocs.total === 0) {
-    error("❌ No user found with that email");
-    return res.send("User not found", 404);
+  if (!userRows?.documents?.length) {
+    context.log("⚠️ No matching user found");
+    context.res = { status: 200, body: "No matching user" };
+    return;
   }
 
-  const user = userDocs.documents[0];
-  log("✅ Matching user:", user.$id);
+  const user = userRows.documents[0];
+  context.log("👤 User found:", JSON.stringify(user));
 
-  // Update catalog access
+  // Update matching record
   try {
     await databases.updateDocument(
-      env.USER_DATABASE_ID,
-      env.USER_COLLECTION_ID,
+      databaseId,
+      collectionId,
       user.$id,
       {
         canViewCatalog: true,
-        catalogYear: 2024,
         accessGrantedAt: new Date().toISOString(),
       }
     );
+    context.log("✅ User access updated successfully");
   } catch (err) {
-    error("❌ Failed updating user:", err);
-    return res.send("Database update error", 500);
+    context.error("❌ Failed to update document:", err);
+    context.res = { status: 500, body: "Update failed" };
+    return;
   }
 
-  log("🎉 SUCCESS — Catalog access granted.");
-  return res.send("OK", 200);
-};
+  context.res = { status: 200, body: "Catalog access updated" };
+}
