@@ -1,38 +1,31 @@
-import { Client, Databases, Query } from "node-appwrite";
-
 export default async ({ req, res, log, error }) => {
   log("📥 Function Triggered");
 
-  // Raw Square payload
-  log("📦 Raw Payload:", JSON.stringify(req.bodyRaw || {}));
+  // Appwrite Functions v3+: use req.body, not req.bodyRaw
+  const raw = req.body || "{}";
 
-  // Parse payload
+  log("📦 Raw Payload:", raw);
+
   let payload;
   try {
-    payload = JSON.parse(req.bodyRaw);
-  } catch (e) {
-    error("❌ Failed to parse JSON:", e);
+    payload = typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch (err) {
+    error("❌ Failed to parse JSON:", err);
     return res.send("Invalid JSON");
   }
 
-  // Identify Square event type
-  const eventType = payload?.type || payload?.event_type || "";
+  // Identify event type
+  const eventType =
+    payload?.type ||
+    payload?.event_type ||
+    payload?.data?.type ||
+    "";
+
   log("🔎 Detected eventType:", eventType);
 
   if (!eventType.includes("payment")) {
-    log("⚠️ Ignored non-payment event");
-    return res.send("Ignored event");
-  }
-
-  // Extract buyer email
-  const buyerEmail =
-    payload?.data?.object?.payment?.buyer_email_address ||
-    payload?.data?.object?.order?.buyer_email_address ||
-    null;
-
-  if (!buyerEmail) {
-    error("❌ No buyer email found in payload!");
-    return res.send("Missing email");
+    log("⚠️ Ignored non payment event");
+    return res.send("Ignored");
   }
 
   log("📧 Buyer Email:", buyerEmail);
