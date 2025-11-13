@@ -47,4 +47,73 @@ export default async function (req, res) {
   console.log("📧 Buyer Email:", buyerEmail);
 
   if (!buyerEmail) {
-    console.log("❌ No buyer
+    console.log("❌ No buyer email found in event");
+    return res.send("No buyer email found");
+  }
+
+  // ---------------------------------------------------------
+  // 3. CONNECT TO APPWRITE
+  // ---------------------------------------------------------
+
+  const client = new Client()
+    .setEndpoint(process.env.APPWRITE_ENDPOINT)
+    .setProject(process.env.APPWRITE_PROJECT_ID)
+    .setKey(process.env.APPWRITE_API_KEY);
+
+  const db = new Databases(client);
+
+  console.log(
+    "DEBUG ENV:",
+    JSON.stringify({
+      endpoint: process.env.APPWRITE_ENDPOINT,
+      project: process.env.APPWRITE_PROJECT_ID,
+      db: process.env.APPWRITE_DB_ID,
+      col: process.env.USER_COLLECTION_ID,
+    })
+  );
+
+  // ---------------------------------------------------------
+  // 4. FIND USER BY EMAIL
+  // ---------------------------------------------------------
+  let users;
+  try {
+    users = await db.listDocuments(
+      process.env.APPWRITE_DB_ID,
+      process.env.USER_COLLECTION_ID,
+      [Query.equal("email", buyerEmail)]
+    );
+  } catch (err) {
+    console.log("❌ DB Query Failed:", err.message);
+    return res.send("DB Query error");
+  }
+
+  console.log("🔎 DB Query Result:", users);
+
+  if (!users || users.documents.length === 0) {
+    console.log("❌ No matching user found for:", buyerEmail);
+    return res.send("NO USER FOUND");
+  }
+
+  const userDoc = users.documents[0];
+  console.log("👉 Matched User Document:", userDoc);
+
+  // ---------------------------------------------------------
+  // 5. UPDATE USER ACCESS
+  // ---------------------------------------------------------
+  try {
+    await db.updateDocument(
+      process.env.APPWRITE_DB_ID,
+      process.env.USER_COLLECTION_ID,
+      userDoc.$id,
+      {
+        canViewCatalog: true,
+      }
+    );
+
+    console.log("✅ SUCCESS: Catalog access granted!");
+    return res.send("SUCCESS");
+  } catch (err) {
+    console.log("❌ Update Failed:", err.message);
+    return res.send("UPDATE ERROR");
+  }
+}
