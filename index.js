@@ -1,66 +1,77 @@
-const sdk = require("node-appwrite");
+import { Client, Databases, Query } from "node-appwrite";
 
-/*
-POST BODY FORMAT EXPECTED:
-{
-   "email": "buyer@example.com",
-   "year": 2024
-}
-*/
-
-module.exports = async function (req, res) {
-  const client = new sdk.Client()
-    .setEndpoint(process.env.APPWRITE_ENDPOINT)
-    .setProject(process.env.APPWRITE_PROJECT_ID)
-    .setKey(process.env.APPWRITE_API_KEY);   // API Key with Database Write permission
-
-  const db = new sdk.Databases(client);
-
+export default async ({ req, res, log, error }) => {
   try {
-    // 1️⃣ Parse incoming webhook POST body
-    const body = JSON.parse(req.body || "{}");
+    log("📥 Square webhook received");
 
-    if (!body.email) {
-      return res.json({ error: "Missing email in request body"});
+    // Parse Square payload
+    const body = req.bodyRaw ? JSON.parse(req.bodyRaw) : {};
+    log("📦 Payload: " + JSON.stringify(body));
+
+    // Validate event type
+    const eventType = body.type || "";
+    if (!eventType.startsWith("payment.") && !eventType.startsWith("order.")) {
+      log("⚠️ Ignored event: " + eventType);
+      return res.send("Ignored event");
     }
 
-    const email = body.email.toLowerCase();
-    const catalogYear = body.year || 2024;
+    // Extract customer email from order/payment
+    let email = null;
 
-    // 2️⃣ Find the user document by email
-    const users = await db.listDocuments(
-      process.env.USER_DB_ID,
-      process.env.USER_COLLECTION_ID,
-      [ sdk.Query.equal("email", email) ]
-    );
+    // Priority #1 — payment object
+    if (body.data?.object?.payment?.buyer_email_address) {
+      email = body.data.object.payment.buyer_email_address;
+    }
+
+    // Priority #2 — order object
+    if (!email && body.data?.object?.order?.buyer_email) {
+      email = body.data.object.order.buyer_email;
+    }
+
+    if (!email) {
+      log("❌ No email found in payload. Cannot continue.");
+      return res.json({ success: false, error: "No email found" });
+    }
+
+    log("📧 Buyer email: " + email);
+
+    // Setup Appwrite Client
+    const client = new Client()
+      .setEndpoint(process.env.APPWRITE_ENDPOINT)
+      .setProject(process.env.APPWRITE_PROJECT_ID)
+      .setKey(process.env.APPWRITE_API_KEY);
+
+    const databases = new Databases(client);
+
+    const databaseId = process.env.APPWRITE_DB_ID;
+    const collectionId = process.env.APPWRITE_USERS_COLLECTION_ID;
+
+    // Look up user document by email
+    const users = await databases.listDocuments(databaseId, collectionId, [
+      Query.equal("email", email),
+    ]);
 
     if (users.total === 0) {
-      return res.json({ error: "User not found in database" });
+      log("❌ No matching Appwrite user found for email: " + email);
+      return res.json({ success: false, error: "User not found" });
     }
 
     const userDoc = users.documents[0];
 
-    // 3️⃣ Update their access
-    await db.updateDocument(
-      process.env.USER_DB_ID,
-      process.env.USER_COLLECTION_ID,
-      userDoc.$id,
-      {
-        canViewCatalog: true,
-        catalogYear: catalogYear,
-        accessGrantedAt: new Date().toISOString()
-      }
-    );
+    log("👤 User matched in DB: " + userDoc.$id);
 
-    return res.json({
-      success: true,
-      message: "Catalog access granted",
-      email: email
+    // Update the database document
+    await databases.updateDocument(databaseId, collectionId, userDoc.$id, {
+      canViewCatalog: true,
+      catalogYear: 2024,
+      accessGrantedAt: new Date().toISOString(),
     });
 
+    log("✅ Catalog access granted!");
+
+    return res.json({ success: true });
   } catch (err) {
-    return res.json({
-      error: err.message || "Function error"
-    });
+    error("🔥 Error processing webhook: " + err.message);
+    return res.json({ success: false, error: err.message });
   }
 };
