@@ -1,121 +1,93 @@
 import { Client, Databases, Query } from "node-appwrite";
 
 export default async ({ req, res, log, error }) => {
-  // ----------------------------
-  // 1. DEBUG ENV VARS
-  // ----------------------------
-  log("DEBUG ENV:", {
-    endpoint: process.env.APPWRITE_ENDPOINT,
-    project: process.env.APPWRITE_PROJECT_ID,
-    apiKey: process.env.APPWRITE_API_KEY ? "[SET]" : "[MISSING]",
-    db: process.env.APPWRITE_DATABASE_ID,
-    col: process.env.USER_COLLECTION_ID,
-  });
+  log("📥 Function Triggered");
 
-  // ----------------------------
-  // 2. Read raw request body
-  // ----------------------------
-  log("📥 Appwrite Function Triggered");
+  // Raw Square payload
+  log("📦 Raw Payload:", JSON.stringify(req.bodyRaw || {}));
 
-  if (!req.bodyRaw) {
-    error("❌ No req.bodyRaw received");
-    return res.send("Missing body", 400);
-  }
-
-  log("📦 Raw Payload: " + req.bodyRaw);
-
-  let body = {};
+  // Parse payload
+  let payload;
   try {
-    body = JSON.parse(req.bodyRaw);
-  } catch (err) {
-    error("❌ Failed to parse JSON: " + err.message);
-    return res.send("Invalid JSON", 400);
+    payload = JSON.parse(req.bodyRaw);
+  } catch (e) {
+    error("❌ Failed to parse JSON:", e);
+    return res.send("Invalid JSON");
   }
 
-  // ----------------------------
-  // 3. Extract event + buyer email
-  // ----------------------------
-  const eventType = body.type || body.event_type;
-  log("🔎 Detected eventType: " + eventType);
+  // Identify Square event type
+  const eventType = payload?.type || payload?.event_type || "";
+  log("🔎 Detected eventType:", eventType);
 
-  if (eventType !== "payment.created") {
-    log("⚠️ Ignored event: " + eventType);
-    return res.send("Ignored", 200);
+  if (!eventType.includes("payment")) {
+    log("⚠️ Ignored non-payment event");
+    return res.send("Ignored event");
   }
 
+  // Extract buyer email
   const buyerEmail =
-    body.data?.object?.payment?.buyer_email_address ||
-    body.data?.object?.order?.buyer_email ||
+    payload?.data?.object?.payment?.buyer_email_address ||
+    payload?.data?.object?.order?.buyer_email_address ||
     null;
 
-  log("📧 Buyer Email: " + buyerEmail);
-
   if (!buyerEmail) {
-    error("❌ No buyer_email_address found");
-    return res.send("Missing email", 400);
+    error("❌ No buyer email found in payload!");
+    return res.send("Missing email");
   }
 
-  // ----------------------------
-  // 4. Init Appwrite Client
-  // ----------------------------
+  log("📧 Buyer Email:", buyerEmail);
+
+  // ------- Appwrite Client -------
   const client = new Client()
     .setEndpoint(process.env.APPWRITE_ENDPOINT)
     .setProject(process.env.APPWRITE_PROJECT_ID)
     .setKey(process.env.APPWRITE_API_KEY);
 
-  const dbId = process.env.APPWRITE_DATABASE_ID;
-  const colId = process.env.USER_COLLECTION_ID;
+  const db = new Databases(client);
 
-  const databases = new Databases(client);
+  const dbId = "690696ac002796e1d81b"; // exhibitor_db
+  const usersCollection = "691538490013ed9a0643"; // NEW fixed collection ID
 
-  // ----------------------------
-  // 5. Query DB for matching email
-  // ----------------------------
-  let userDocList;
-
+  // -------- Lookup User by Email --------
+  let userDocs;
   try {
-    userDocList = await databases.listDocuments(
-      dbId,
-      colId,
-      [
-        Query.equal("email", buyerEmail)
-      ]
-    );
+    log("🔍 Querying DB for email:", buyerEmail);
 
-    log("📁 DB Query Result Count: " + userDocList.total);
+    userDocs = await db.listDocuments(dbId, usersCollection, [
+      Query.equal("email", buyerEmail),
+    ]);
+
+    log("📄 Query Result:", JSON.stringify(userDocs.documents));
   } catch (err) {
-    error("❌ DB Query Failed: " + err.message);
-    return res.send("DB query error", 500);
+    error("❌ DB Query Error:", err);
+    return res.send("DB query failed");
   }
 
-  if (userDocList.total === 0) {
-    error("❌ No user found for email: " + buyerEmail);
-    return res.send("No matching user", 404);
+  if (userDocs.documents.length === 0) {
+    error("❌ No matching user found for email:", buyerEmail);
+    return res.send("User not found");
   }
 
-  const document = userDocList.documents[0];
-  log("📄 Found document: " + document.$id);
+  const user = userDocs.documents[0];
+  log("✅ User Found:", JSON.stringify(user));
 
-  // ----------------------------
-  // 6. Update catalog access
-  // ----------------------------
+  // ------- Update User Access -------
   try {
-    await databases.updateDocument(
+    const updateResult = await db.updateDocument(
       dbId,
-      colId,
-      document.$id,
+      usersCollection,
+      user.$id,
       {
         canViewCatalog: true,
         catalogYear: 2024,
-        accessGrantedAt: new Date().toISOString()
+        accessGrantedAt: new Date().toISOString(),
       }
     );
 
-    log("✅ Catalog Access Updated for: " + document.$id);
+    log("🎉 User updated:", JSON.stringify(updateResult));
+    return res.send("Success");
   } catch (err) {
-    error("❌ Failed to update document: " + err.message);
-    return res.send("Update error", 500);
+    error("❌ Update Failed:", err);
+    return res.send("Update failed");
   }
-
-  return res.send("Success", 200);
 };
