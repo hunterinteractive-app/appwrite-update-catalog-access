@@ -15,27 +15,19 @@ export default async ({ req, res, log, error }) => {
       return res.send("Ignored event");
     }
 
-    // Extract customer email from order/payment
-    let email = null;
-
-    // Priority #1 — payment object
-    if (body.data?.object?.payment?.buyer_email_address) {
-      email = body.data.object.payment.buyer_email_address;
-    }
-
-    // Priority #2 — order object
-    if (!email && body.data?.object?.order?.buyer_email) {
-      email = body.data.object.order.buyer_email;
-    }
+    // Extract customer email
+    let email = body?.data?.object?.payment?.buyer_email_address
+      || body?.data?.object?.order?.buyer_email
+      || null;
 
     if (!email) {
-      log("❌ No email found in payload. Cannot continue.");
+      log("❌ No email found in payload");
       return res.json({ success: false, error: "No email found" });
     }
 
     log("📧 Buyer email: " + email);
 
-    // Setup Appwrite Client
+    // Setup Appwrite client
     const client = new Client()
       .setEndpoint(process.env.APPWRITE_ENDPOINT)
       .setProject(process.env.APPWRITE_PROJECT_ID)
@@ -46,32 +38,32 @@ export default async ({ req, res, log, error }) => {
     const databaseId = process.env.APPWRITE_DB_ID;
     const collectionId = process.env.APPWRITE_USERS_COLLECTION_ID;
 
-    // Look up user document by email
+    // Query for user by email
     const users = await databases.listDocuments(databaseId, collectionId, [
       Query.equal("email", email),
     ]);
 
     if (users.total === 0) {
-      log("❌ No matching Appwrite user found for email: " + email);
+      log("❌ No Appwrite user found for email: " + email);
       return res.json({ success: false, error: "User not found" });
     }
 
     const userDoc = users.documents[0];
 
-    log("👤 User matched in DB: " + userDoc.$id);
+    log("👤 Updating user document: " + userDoc.$id);
 
-    // Update the database document
+    // Update user access
     await databases.updateDocument(databaseId, collectionId, userDoc.$id, {
       canViewCatalog: true,
       catalogYear: 2024,
       accessGrantedAt: new Date().toISOString(),
     });
 
-    log("✅ Catalog access granted!");
+    log("✅ Catalog access granted");
 
     return res.json({ success: true });
   } catch (err) {
-    error("🔥 Error processing webhook: " + err.message);
+    error("🔥 Error: " + err.message);
     return res.json({ success: false, error: err.message });
   }
 };
