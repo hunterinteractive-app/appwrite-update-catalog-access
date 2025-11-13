@@ -1,10 +1,8 @@
 {
-  "name": "marcs-catalog-access-sync",
+  "name": "update-catalog-access",
   "version": "1.0.0",
-  "description": "Appwrite function to sync Square digital catalog purchases with user access permissions.",
-  "main": "index.js",
   "type": "module",
   "dependencies": {
-    "node-appwrite": "^14.0.0"
+    "appwrite": "^13.0.0"
   }
 }
