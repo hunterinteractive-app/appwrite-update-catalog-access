@@ -1,8 +1,9 @@
 {
-  "name": "update-catalog-access",
+  "name": "appwrite-update-catalog-access",
   "version": "1.0.0",
   "type": "module",
+  "main": "index.js",
   "dependencies": {
-    "appwrite": "^13.0.0"
+    "node-appwrite": "^14.0.0"
   }
 }
