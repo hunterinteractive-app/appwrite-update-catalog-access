@@ -1,119 +1,97 @@
-import { Client, Databases, Query } from "appwrite";
+import sdk from "node-appwrite";
 
-export default async function (req, res) {
+export default async ({ req, res, log, error, env }) => {
+  // Allow Square to POST without CORS issues
   res.setHeader("Content-Type", "application/json");
 
-  // ---------------------------------------------------------
-  // 0. LOG RAW BODY
-  // ---------------------------------------------------------
-  console.log("📥 Function Triggered");
+  log("📥 Function Triggered");
 
-  let raw = req.bodyRaw || "";
-  console.log("📦 Raw Payload:", raw);
+  // Pull raw JSON body
+  const raw = req.bodyRaw;
+  log("📦 Raw Payload:", raw);
 
-  // Handle empty body
-  if (!raw || raw.trim() === "") {
-    console.log("❌ Empty body received");
-    return res.send("Ignored: Empty body");
+  if (!raw) {
+    error("❌ No body received");
+    return res.send("No body", 400);
   }
 
-  // ---------------------------------------------------------
-  // 1. SAFE JSON PARSE
-  // ---------------------------------------------------------
-  let event;
+  let payload;
   try {
-    event = JSON.parse(raw);
+    payload = JSON.parse(raw);
   } catch (err) {
-    console.log("❌ Failed to parse JSON:", err.message);
-    return res.send("JSON parse error");
+    error("❌ Failed to parse JSON:", err);
+    return res.send("Invalid JSON", 400);
   }
 
-  console.log("🔎 Parsed Event:", event);
+  const eventType = payload.type || payload.event_type || "";
+  log("🔎 Detected eventType:", eventType);
 
-  // ---------------------------------------------------------
-  // 2. VALIDATE PAYMENT EVENT
-  // ---------------------------------------------------------
-  const eventType = event?.type;
-  console.log("🔎 Detected eventType:", eventType);
-
-  if (eventType !== "payment.created") {
-    console.log("⚠️ Ignored non-payment event");
-    return res.send("Ignored: Not a payment event");
+  if (!eventType.includes("payment")) {
+    log("⚠️ Ignored non-payment event");
+    return res.send("Ignored", 200);
   }
 
-  const buyerEmail =
-    event?.data?.object?.payment?.buyer_email_address;
+  // Extract buyer email
+  const email =
+    payload?.data?.object?.payment?.buyer_email_address ||
+    payload?.data?.object?.order?.fulfillments?.[0]?.recipient?.email_address ||
+    null;
 
-  console.log("📧 Buyer Email:", buyerEmail);
-
-  if (!buyerEmail) {
-    console.log("❌ No buyer email found in event");
-    return res.send("No buyer email found");
+  if (!email) {
+    error("❌ No buyer email found in webhook");
+    return res.send("No buyer email", 400);
   }
 
-  // ---------------------------------------------------------
-  // 3. CONNECT TO APPWRITE
-  // ---------------------------------------------------------
+  log("📧 Buyer Email:", email);
 
-  const client = new Client()
-    .setEndpoint(process.env.APPWRITE_ENDPOINT)
-    .setProject(process.env.APPWRITE_PROJECT_ID)
-    .setKey(process.env.APPWRITE_API_KEY);
+  // Initialize Appwrite client
+  const client = new sdk.Client()
+    .setEndpoint(env.APPWRITE_ENDPOINT)
+    .setProject(env.APPWRITE_PROJECT_ID)
+    .setKey(env.APPWRITE_API_KEY);
 
-  const db = new Databases(client);
+  const databases = new sdk.Databases(client);
 
-  console.log(
-    "DEBUG ENV:",
-    JSON.stringify({
-      endpoint: process.env.APPWRITE_ENDPOINT,
-      project: process.env.APPWRITE_PROJECT_ID,
-      db: process.env.APPWRITE_DB_ID,
-      col: process.env.USER_COLLECTION_ID,
-    })
-  );
-
-  // ---------------------------------------------------------
-  // 4. FIND USER BY EMAIL
-  // ---------------------------------------------------------
-  let users;
+  // Query matching user
+  let userDocs;
   try {
-    users = await db.listDocuments(
-      process.env.APPWRITE_DB_ID,
-      process.env.USER_COLLECTION_ID,
-      [Query.equal("email", buyerEmail)]
+    userDocs = await databases.listDocuments(
+      env.USER_DATABASE_ID,
+      env.USER_COLLECTION_ID,
+      [sdk.Query.equal("email", email)]
     );
   } catch (err) {
-    console.log("❌ DB Query Failed:", err.message);
-    return res.send("DB Query error");
+    error("❌ DB Query Failed:", err);
+    return res.send("DB query failed", 500);
   }
 
-  console.log("🔎 DB Query Result:", users);
+  log("📊 Query result:", JSON.stringify(userDocs, null, 2));
 
-  if (!users || users.documents.length === 0) {
-    console.log("❌ No matching user found for:", buyerEmail);
-    return res.send("NO USER FOUND");
+  if (userDocs.total === 0) {
+    error("❌ No user found with that email");
+    return res.send("User not found", 404);
   }
 
-  const userDoc = users.documents[0];
-  console.log("👉 Matched User Document:", userDoc);
+  const user = userDocs.documents[0];
+  log("✅ Matching user:", user.$id);
 
-  // ---------------------------------------------------------
-  // 5. UPDATE USER ACCESS
-  // ---------------------------------------------------------
+  // Update catalog access
   try {
-    await db.updateDocument(
-      process.env.APPWRITE_DB_ID,
-      process.env.USER_COLLECTION_ID,
-      userDoc.$id,
+    await databases.updateDocument(
+      env.USER_DATABASE_ID,
+      env.USER_COLLECTION_ID,
+      user.$id,
       {
         canViewCatalog: true,
+        catalogYear: 2024,
+        accessGrantedAt: new Date().toISOString(),
       }
     );
-
-    console.log("✅ SUCCESS: Catalog access granted!");
-    return res.send("SUCCESS");
   } catch (err) {
-    console.log("❌ Update Failed:", err.message);
-    return res.send("UPDATE ERROR");
+    error("❌ Failed updating user:", err);
+    return res.send("Database update error", 500);
   }
-}
+
+  log("🎉 SUCCESS — Catalog access granted.");
+  return res.send("OK", 200);
+};
