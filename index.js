@@ -49,4 +49,58 @@ export default async function (context) {
   // Appwrite client setup
   const client = new Client()
     .setEndpoint(context.env.APPWRITE_ENDPOINT)
-    .setProject(context.env.APPWRITE_PROJECT_I
+    .setProject(context.env.APPWRITE_PROJECT_ID)
+    .setKey(context.env.APPWRITE_API_KEY);
+
+  const databases = new Databases(client);
+
+  const databaseId = context.env.USER_DATABASE_ID;
+  const collectionId = context.env.USER_COLLECTION_ID;
+
+  context.log("🔧 DB Info:", { databaseId, collectionId });
+
+  // Query DB
+  let result;
+  try {
+    result = await databases.listDocuments(databaseId, collectionId, [
+      Query.equal("email", buyerEmail),
+    ]);
+  } catch (err) {
+    context.error("❌ DB query failed:", err);
+    context.res = { status: 500, body: "Database query failed" };
+    return;
+  }
+
+  context.log("📊 DB Result:", JSON.stringify(result));
+
+  if (!result.documents.length) {
+    context.log("⚠️ No user found with that email");
+    context.res = { status: 200, body: "No matching user" };
+    return;
+  }
+
+  const user = result.documents[0];
+  context.log("👤 Found User:", JSON.stringify(user));
+
+  // Update DB
+  try {
+    await databases.updateDocument(databaseId, collectionId, user.$id, {
+      canViewCatalog: true,
+      accessGrantedAt: new Date().toISOString(),
+    });
+
+    context.log("✅ Catalog access granted!");
+  } catch (err) {
+    context.error("❌ Failed to update document:", err);
+    context.res = { status: 500, body: "Update failed" };
+    return;
+  }
+
+  // FINAL RESPONSE
+  context.res = {
+    status: 200,
+    body: "Catalog access updated successfully",
+  };
+
+  return;
+}
