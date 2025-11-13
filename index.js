@@ -1,3 +1,11 @@
+console.log("DEBUG ENV:", {
+  endpoint: process.env.APPWRITE_ENDPOINT,
+  project: process.env.APPWRITE_PROJECT_ID,
+  apiKey: process.env.APPWRITE_API_KEY ? "[SET]" : "[MISSING]",
+  db: process.env.APPWRITE_DATABASE_ID,
+  col: process.env.USER_COLLECTION_ID,
+});
+
 import { Client, Databases, Query } from "node-appwrite";
 
 export default async ({ req, res, log, error }) => {
